@@ -42,15 +42,20 @@ void rockTests() {
     Game early(7), late(7);
     early.reset(); late.reset();
     late.checkpointIndex = static_cast<int>(late.platforms.size()) - 1;
+    const auto& summit = late.platforms.back().box;
+    late.player = late.checkpoint = {summit.x + 50, summit.y - playerHeight};
+    early.bananas.clear(); late.bananas.clear();
     early.rockClock = late.rockClock = 0;
     early.step(1.0f / 120, {1, false}); late.step(1.0f / 120, {1, false});
+    check(early.rocks.size() == 1 && late.rocks.size() == 1, "both difficulty samples spawn a rock");
     check(early.rockDifficulty() == 0 && late.rockDifficulty() == 1, "difficulty follows checkpoint progress");
     check(std::abs(early.rocks.front().warningDuration - 1.1f) < 0.001f &&
           std::abs(late.rocks.front().warningDuration - 0.8f) < 0.001f, "warning duration ramps within fair limits");
     check(early.rockClock >= 2.2f && early.rockClock <= 3 &&
           late.rockClock >= 1.55f && late.rockClock <= 2.35f, "drop intervals stay in difficulty bounds");
     check(std::abs(early.rockClock - late.rockClock - 0.65f) < 0.001f, "summit drops are more frequent");
-    check(early.rocks.front().pos.x == late.rocks.front().pos.x, "same seed and input reproduce targeting");
+    check(std::abs((early.rocks.front().pos.x - early.player.x) -
+                   (late.rocks.front().pos.x - late.player.x)) < 0.001f, "same seed and input reproduce target offsets");
 
     game.reset(); game.rockClock = 0;
     for (std::size_t i = 0; i < maxRocks; ++i) game.rocks.push_back({{1000, -1000}, 0, 10, 20});
@@ -96,6 +101,16 @@ void rockTests() {
     game.rocks.push_back({{619, 480}, rockMaxSpeed, 0, 20});
     game.step(1.0f / 30, {});
     check(game.rocks.empty() && game.lives == 3, "platform stops rock before it reaches a player below");
+
+    game.reset(); game.rockClock = 9999;
+    game.player = {639.5f, 510}; game.grounded = false;
+    game.rocks.push_back({{619, 499.9f}, rockMaxSpeed, 0, 20});
+    game.step(1.0f / 30, {-1, false});
+    check(game.rocks.empty() && game.lives == 3, "moving into the lane after a shatter cannot cause a phantom hit");
+    game.player = {625, 510}; game.grounded = false;
+    game.rocks.push_back({{619, 499.9f}, rockMaxSpeed, 0, 20});
+    game.step(1.0f / 30, {1, false});
+    check(game.lives == 2, "contact before a platform impact still hurts a moving player");
 
     game.reset(); game.rockClock = 9999;
     Rock edge{{430, 450}, rockMaxSpeed, 0, 20};

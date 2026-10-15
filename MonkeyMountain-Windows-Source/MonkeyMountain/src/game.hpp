@@ -208,17 +208,27 @@ public:
             float landing = rockLandingY(r);
             float speed = std::clamp(r.speed, 0.0f, rockMaxSpeed);
             float accelerating = std::min(activeDt, (rockMaxSpeed - speed) / rockGravity);
-            r.pos.y += speed * accelerating + 0.5f * rockGravity * accelerating * accelerating +
-                       rockMaxSpeed * (activeDt - accelerating);
+            float acceleratedDistance = speed * accelerating + 0.5f * rockGravity * accelerating * accelerating;
+            r.pos.y += acceleratedDistance + rockMaxSpeed * (activeDt - accelerating);
             r.speed = std::min(rockMaxSpeed, speed + rockGravity * activeDt);
+            float fallingTime = activeDt;
             if (r.pos.y >= landing) {
+                float distance = landing - from.y;
+                fallingTime = distance <= acceleratedDistance ?
+                    (std::sqrt(speed * speed + 2 * rockGravity * distance) - speed) / rockGravity :
+                    accelerating + (distance - acceleratedDistance) / rockMaxSpeed;
+                fallingTime = std::clamp(fallingTime, 0.0f, activeDt);
                 r.pos.y = landing; r.shattered = true;
                 burst({r.pos.x, r.pos.y + r.radius}, false);
             }
-            // Sweep in the moving player's reference frame to avoid tunneling.
-            from.x += (player.x - previousPlayer.x) * (activeDt / dt);
-            from.y += (player.y - previousPlayer.y) * (activeDt / dt);
-            if (sweptCircleTouches(from, r.pos, r.radius * 0.85f, playerBox())) hit = true;
+            // Stop the relative-motion sweep at impact, not at the end of the step.
+            Vec movement{player.x - previousPlayer.x, player.y - previousPlayer.y};
+            float endFraction = (dt - activeDt + fallingTime) / dt;
+            Rect box{previousPlayer.x + movement.x * endFraction,
+                     previousPlayer.y + movement.y * endFraction, playerWidth, playerHeight};
+            from.x += movement.x * (fallingTime / dt);
+            from.y += movement.y * (fallingTime / dt);
+            if (sweptCircleTouches(from, r.pos, r.radius * 0.85f, box)) hit = true;
         }
         rocks.erase(std::remove_if(rocks.begin(), rocks.end(), [&](const Rock& r) {
             return r.shattered || r.pos.y > player.y + 850;
