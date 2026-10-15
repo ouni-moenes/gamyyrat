@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <random>
 #include <vector>
 
@@ -11,12 +12,19 @@ constexpr float playerHeight = 55.0f;
 constexpr float gravity = 1550.0f;
 constexpr float jumpSpeed = 625.0f;
 constexpr float runSpeed = 285.0f;
+constexpr float rockGravity = 780.0f;
+constexpr float rockMaxSpeed = 680.0f;
+constexpr std::size_t maxRocks = 4;
 
 struct Vec { float x = 0, y = 0; };
 struct Rect { float x, y, w, h; };
 struct Platform { Rect box; };
 struct Banana { Vec pos; bool eaten = false; };
-struct Rock { Vec pos; float speed = 0, warning = 0.95f, radius = 20; };
+struct Rock {
+    Vec pos;
+    float speed = 0, warning = 1.1f, radius = 20, warningDuration = 1.1f;
+    bool shattered = false;
+};
 struct Particle { Vec pos, velocity; float life; bool golden; };
 struct Input { float move = 0; bool jump = false; };
 enum class Mode { Title, Playing, Paused, Lost, Won };
@@ -30,6 +38,34 @@ inline bool circleTouches(Vec center, float radius, Rect box) {
     float dx = center.x - std::clamp(center.x, box.x, box.x + box.w);
     float dy = center.y - std::clamp(center.y, box.y, box.y + box.h);
     return dx * dx + dy * dy <= radius * radius;
+}
+
+inline bool segmentTouchesRect(Vec from, Vec to, Rect box) {
+    float enter = 0, exit = 1;
+    auto clip = [&](float start, float delta, float lo, float hi) {
+        if (delta == 0) return start >= lo && start <= hi;
+        float a = (lo - start) / delta, b = (hi - start) / delta;
+        if (a > b) std::swap(a, b);
+        enter = std::max(enter, a); exit = std::min(exit, b);
+        return enter <= exit;
+    };
+    return clip(from.x, to.x - from.x, box.x, box.x + box.w) &&
+           clip(from.y, to.y - from.y, box.y, box.y + box.h);
+}
+
+inline bool sweptCircleTouches(Vec from, Vec to, float radius, Rect box) {
+    if (segmentTouchesRect(from, to, {box.x - radius, box.y, box.w + 2 * radius, box.h}) ||
+        segmentTouchesRect(from, to, {box.x, box.y - radius, box.w, box.h + 2 * radius})) return true;
+    Vec delta{to.x - from.x, to.y - from.y};
+    float lengthSquared = delta.x * delta.x + delta.y * delta.y;
+    for (Vec corner : {Vec{box.x, box.y}, Vec{box.x + box.w, box.y},
+                       Vec{box.x, box.y + box.h}, Vec{box.x + box.w, box.y + box.h}}) {
+        float t = lengthSquared == 0 ? 0 : std::clamp(
+            ((corner.x - from.x) * delta.x + (corner.y - from.y) * delta.y) / lengthSquared, 0.0f, 1.0f);
+        float dx = from.x + delta.x * t - corner.x, dy = from.y + delta.y * t - corner.y;
+        if (dx * dx + dy * dy <= radius * radius) return true;
+    }
+    return false;
 }
 
 class Game {
@@ -74,6 +110,29 @@ public:
     int altitude() const { return std::max(0, static_cast<int>((535 - player.y) / 8)); }
     float range(float lo, float hi) { return std::uniform_real_distribution<float>(lo, hi)(random); }
 
+    float rockDifficulty() const {
+        return std::clamp(static_cast<float>(checkpointIndex) / (platforms.size() - 1), 0.0f, 1.0f);
+    }
+
+    float rockLandingY(const Rock& rock) const {
+        float landing = std::numeric_limits<float>::infinity();
+        for (const auto& platform : platforms) {
+            const auto& p = platform.box;
+            float dx = rock.pos.x - std::clamp(rock.pos.x, p.x, p.x + p.w);
+            if (std::abs(dx) > rock.radius) continue;
+            float contact = p.y - std::sqrt(std::max(0.0f, rock.radius * rock.radius - dx * dx));
+            if (contact >= rock.pos.y) landing = std::min(landing, contact);
+        }
+        return landing;
+    }
+
+    void spawnRock() {
+        float difficulty = rockDifficulty();
+        float warning = 1.1f - 0.3f * difficulty;
+        float target = player.x + playerWidth / 2 + velocity.x * 0.35f + range(-90, 90);
+        rocks.push_back({{std::max(-100.0f, target), player.y - 430}, 0, warning, range(17, 25), warning});
+    }
+
     void burst(Vec pos, bool golden) {
         for (int i = 0; i < 12; ++i)
             particles.push_back({pos, {range(-110, 110), range(-200, -35)}, range(0.3f, 0.65f), golden});
@@ -96,6 +155,7 @@ public:
         invincible = std::max(0.0f, invincible - dt);
         coyote = grounded ? 0.1f : std::max(0.0f, coyote - dt);
         jumpBuffer = input.jump ? 0.13f : std::max(0.0f, jumpBuffer - dt);
+        const Vec previousPlayer = player;
         const float move = std::clamp(input.move, -1.0f, 1.0f);
         velocity.x = move * runSpeed;
         if (move != 0) facing = move > 0 ? 1 : -1;
@@ -132,18 +192,46 @@ public:
         }
         rockClock -= dt;
         if (rockClock <= 0) {
-            float target = player.x + playerWidth / 2 + velocity.x * 0.5f + range(-75, 75);
-            rocks.push_back({{std::max(-100.0f, target), player.y - 410}, 0, 0.95f, range(17, 25)});
-            rockClock = range(1.4f, 2.3f);
+            if (rocks.size() < maxRocks) spawnRock();
+            rockClock = range(2.2f, 3.0f) - 0.65f * rockDifficulty();
         }
         bool hit = false;
         for (auto& r : rocks) {
-            if (r.warning > 0) { r.warning -= dt; continue; }
-            r.speed += 570 * dt; r.pos.y += r.speed * dt;
-            if (circleTouches(r.pos, r.radius * 0.85f, playerBox())) hit = true;
+            float activeDt = dt;
+            if (r.warning > 0) {
+                float waiting = std::min(r.warning, dt);
+                r.warning = std::max(0.0f, r.warning - dt);
+                activeDt -= waiting;
+            }
+            if (activeDt <= 0) continue;
+            Vec from = r.pos;
+            float landing = rockLandingY(r);
+            float speed = std::clamp(r.speed, 0.0f, rockMaxSpeed);
+            float accelerating = std::min(activeDt, (rockMaxSpeed - speed) / rockGravity);
+            float acceleratedDistance = speed * accelerating + 0.5f * rockGravity * accelerating * accelerating;
+            r.pos.y += acceleratedDistance + rockMaxSpeed * (activeDt - accelerating);
+            r.speed = std::min(rockMaxSpeed, speed + rockGravity * activeDt);
+            float fallingTime = activeDt;
+            if (r.pos.y >= landing) {
+                float distance = landing - from.y;
+                fallingTime = distance <= acceleratedDistance ?
+                    (std::sqrt(speed * speed + 2 * rockGravity * distance) - speed) / rockGravity :
+                    accelerating + (distance - acceleratedDistance) / rockMaxSpeed;
+                fallingTime = std::clamp(fallingTime, 0.0f, activeDt);
+                r.pos.y = landing; r.shattered = true;
+                burst({r.pos.x, r.pos.y + r.radius}, false);
+            }
+            // Stop the relative-motion sweep at impact, not at the end of the step.
+            Vec movement{player.x - previousPlayer.x, player.y - previousPlayer.y};
+            float endFraction = (dt - activeDt + fallingTime) / dt;
+            Rect box{previousPlayer.x + movement.x * endFraction,
+                     previousPlayer.y + movement.y * endFraction, playerWidth, playerHeight};
+            from.x += movement.x * (fallingTime / dt);
+            from.y += movement.y * (fallingTime / dt);
+            if (sweptCircleTouches(from, r.pos, r.radius * 0.85f, box)) hit = true;
         }
         rocks.erase(std::remove_if(rocks.begin(), rocks.end(), [&](const Rock& r) {
-            return r.pos.y > player.y + 850;
+            return r.shattered || r.pos.y > player.y + 850;
         }), rocks.end());
         for (auto& p : particles) {
             p.life -= dt; p.velocity.y += 500 * dt;
@@ -152,9 +240,10 @@ public:
         particles.erase(std::remove_if(particles.begin(), particles.end(), [](const Particle& p) {
             return p.life <= 0;
         }), particles.end());
-        if (hit || player.y > platforms[static_cast<std::size_t>(checkpointIndex)].box.y + 490) {
+        bool fell = player.y > platforms[static_cast<std::size_t>(checkpointIndex)].box.y + 490;
+        if (hit || fell) {
             // Falling must still cost a life during the post-hit grace period.
-            if (!hit) invincible = 0;
+            if (fell) invincible = 0;
             damage();
         }
         const auto& summit = platforms.back().box;
