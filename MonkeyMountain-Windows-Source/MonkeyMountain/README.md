@@ -84,12 +84,10 @@ To change difficulty, adjust the movement constants and platform generation in `
 
 ## Verification
 
-- MinGW batch build: passed; all 46 gameplay checks passed.
-- CMake build and CTest: passed on 64-bit Windows.
-- Game and test source: passed GCC `-Wall -Wextra -Wpedantic -Werror -fsyntax-only` checks.
-- Graphical startup: verified with Mesa llvmpipe because the development VM has no hardware OpenGL driver. The software renderer is only used in the development preview and is not bundled in this download.
-- Audio playback could not be verified because the VM has no playback device. The game handles this by running silently.
-- The complete course was verified by automated input-driven simulation; manual in-window gameplay has not been tested.
+- Updated source: Linux Release CMake build (including raylib 5.5) and CTest passed with GCC 11.4 and CMake 3.22.
+- All 87 gameplay checks passed, including input-driven course traversal, warning release timing, terminal speed, platform impacts, moving-player collisions, hazard cleanup, and safe respawns.
+- Game and test source passed GCC `-Wall -Wextra -Wpedantic -Werror -fsyntax-only` checks. Gameplay tests also passed AddressSanitizer and UndefinedBehaviorSanitizer checks and the graphics-free CMake build.
+- Interactive graphics, audio playback, and the updated Windows build have not been verified. The bundled Windows executable is unchanged.
 
 If the Windows executable does not open, update your graphics driver and check OpenGL 3.3 support. The game's source can also be built on a machine with a suitable graphics environment.
 
