@@ -226,13 +226,30 @@ void drawWorld(const Art& a, const mountain::Game& game) {
     a.centered("SUMMIT!", flag.x, flag.y - 145, 22, ink, true);
     for (const auto& r : game.rocks) {
         Vector2 p = a.screen(r.pos.x, r.pos.y);
+        if (p.x + r.radius < 0 || p.x - r.radius > width) continue;
+        const Color danger{198, 86, 58, 255};
+        float landing = game.rockLandingY(r);
+        float groundY = std::isfinite(landing) ? landing + r.radius - a.cameraY : height - 65.0f;
+        float pathTop = std::clamp(p.y + r.radius, 118.0f, height - 65.0f);
+        float pathBottom = std::clamp(groundY, 118.0f, height - 65.0f);
+        if (pathBottom > pathTop) {
+            DrawRectangleRec({p.x - r.radius, pathTop, r.radius * 2, pathBottom - pathTop}, Fade(danger, 0.06f));
+            for (float y = pathTop; y < pathBottom; y += 18)
+                line({p.x, y}, {p.x, std::min(y + 8, pathBottom)}, 2, Fade(danger, 0.3f));
+        }
+        if (std::isfinite(landing) && groundY > 110 && groundY < height - 50)
+            DrawEllipse(static_cast<int>(p.x), static_cast<int>(groundY), r.radius + 7, 6,
+                        Fade(danger, r.warning > 0 ? 0.35f : 0.55f));
         if (r.warning > 0) {
-            float sy = std::clamp(p.y, 126.0f, 430.0f);
-            for (int j = 0; j < 10; ++j)
-                line({p.x, sy + 29 + j * 14.0f}, {p.x, sy + 35 + j * 14.0f}, 2, Fade(Color{187, 83, 58, 255}, 0.32f));
-            DrawCircleV({p.x, sy}, 19 + std::sin(a.time * 17) * 2, Color{198, 86, 58, 255});
+            float sy = std::clamp(p.y, 150.0f, 430.0f);
+            DrawCircleV({p.x, sy}, 19 + std::sin(a.time * 17) * 2, danger);
+            float countdown = std::clamp(r.warning / std::max(0.001f, r.warningDuration), 0.0f, 1.0f);
+            DrawRing({p.x, sy}, 24, 28, -90, -90 + 360 * countdown, 48, danger);
             a.centered("!", p.x, sy - 15, 30, cream, true);
             a.centered("ROCK!", p.x, sy - 43, 15, ink, true);
+            char remaining[16];
+            std::snprintf(remaining, sizeof(remaining), "%.1fs", std::ceil(r.warning * 10) / 10);
+            a.centered(remaining, p.x, sy + 34, 15, ink, true);
         } else {
             line({p.x, p.y - 20}, {p.x - 2, p.y - 49}, 3, Fade(ink, 0.16f));
             rock(p.x, p.y, r.radius, a.time * 145);
